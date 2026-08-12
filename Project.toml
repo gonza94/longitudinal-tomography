@@ -1,0 +1,21 @@
+name = "LongitudinalTomography"
+uuid = "2d5b8ba1-c4e2-40ba-b2b7-d3adbc72f790"
+authors = ["Cristhian Gonzalez-Ortiz"]
+version = "0.1.0"
+
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+JacobiElliptic = "2a8b799e-c098-4961-872a-356c768d184c"
+Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+
+[extras]
+Random = "9a3f8284-686f-5f34-9a14-6c8e0f2268d4"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Random", "Test"]
+
+[compat]
+JacobiElliptic = "0.3"
+Zygote = "0.6, 0.7"
+julia = "1.10"
