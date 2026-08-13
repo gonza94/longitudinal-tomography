@@ -8,11 +8,16 @@ export revolution_period, omega0, omega_rf, synchrotron_tune
 export synchrotron_period_turns, bucket_half_width_s, bucket_half_height_eV
 export tau_from_turn, turn_from_tau
 export theta_from_delta_t, delta_t_from_theta
-export P_from_delta_energy, delta_energy_from_P
+export P_from_delta_energy, delta_energy_from_P, delta_p_over_p0_from_delta_E
 export pendulum_energy, inside_separatrix, trapped_coordinates
 export libration_transport
 export soft_assignments, soft_histogram, predict_rwcm_cascade
-
+export NonInteractingTwoRFMachine
+export slip_tune, nu_slip, slip_stacking_parameter, alpha_s
+export fractional_momentum_separation, energy_separation_eV
+export rf2_center_phase, rf2_center_P, wrap_to_pi
+export noninteracting_two_rf_transport
+export place_rf1_bunches, place_rf2_bunches
 export PhaseSpaceGrid, GridResponse
 export separatrix_grid, grid_weight_matrix, build_response_matrix
 export grid_weights_from_logits, profiles_from_response
@@ -190,7 +195,9 @@ function libration_transport(
 
     # k is the elliptic modulus. The small floor only regularizes the exact
     # stable fixed point k=0, which otherwise gives the indeterminate ratio 0/0.
-    k_squared = max.((1 .+ energy) ./ 2, eps(Float64))
+    k_squared_unregularized = (1 .+ energy) ./ 2
+    fixed_point = k_squared_unregularized .<= 0
+    k_squared = max.(k_squared_unregularized, eps(Float64))
     k = sqrt.(k_squared)
 
     sn0 = clamp.(sin.(theta0 ./ 2) ./ k, -1, 1)
@@ -208,6 +215,12 @@ function libration_transport(
     theta = 2 .* asin.(clamp.(k_grid .* sn_values, -1, 1))
     P = 2 .* k_grid .* cn_values
 
+    # Preserve the exact stable fixed point. The elliptic-modulus floor above
+    # otherwise turns (theta,P)=(0,0) into a spurious O(sqrt(eps)) orbit.
+    fixed_point_grid = reshape(fixed_point, 1, n_particles)
+    theta = ifelse.(fixed_point_grid, 0, theta)
+    P = ifelse.(fixed_point_grid, 0, P)
+
     return (
         theta=theta,
         P=P,
@@ -216,14 +229,14 @@ function libration_transport(
     )
 end
 
+
 """
     soft_assignments(samples, bin_centers; sigma)
 
-Differentiable Gaussian assignment probabilities with dimensions
-
-    (n_observations, n_bins, n_particles).
-
-Every particle's assignments are normalized across the finite bin grid.
+Return differentiable Gaussian bin-assignment probabilities with shape
+`(n_observations, n_bins, n_particles)`. Assignments are normalized over the
+finite bin grid for every observation and particle, so each particle deposits
+exactly unit charge at every observation.
 """
 function soft_assignments(
     samples::AbstractMatrix,
@@ -231,39 +244,20 @@ function soft_assignments(
     sigma::Real,
 )
     sigma > 0 || throw(ArgumentError("sigma must be positive"))
-
     n_observations, n_particles = size(samples)
     n_bins = length(bin_centers)
+    n_bins > 1 || throw(ArgumentError("At least two bin centers are required."))
 
-    n_bins > 1 || throw(
-        ArgumentError("At least two bin centers are required.")
-    )
+    sample_grid = reshape(samples, n_observations, 1, n_particles)
+    bin_grid = reshape(bin_centers, 1, n_bins, 1)
+    log_assignments = -0.5 .* ((sample_grid .- bin_grid) ./ sigma).^2
 
-    sample_grid = reshape(
-        samples,
-        n_observations,
-        1,
-        n_particles,
-    )
-
-    bin_grid = reshape(
-        bin_centers,
-        1,
-        n_bins,
-        1,
-    )
-
-    log_assignments =
-        -0.5 .* ((sample_grid .- bin_grid) ./ sigma).^2
-
-    # Numerically stable softmax over histogram bins.
-    shifted =
-        log_assignments .- maximum(log_assignments; dims=2)
-
+    # Stable softmax over bins for every observation and particle.
+    shifted = log_assignments .- maximum(log_assignments; dims=2)
     unnormalized = exp.(shifted)
-
     return unnormalized ./ sum(unnormalized; dims=2)
 end
+
 
 """
     soft_histogram(samples, bin_centers; sigma, particle_weights=nothing,
@@ -283,19 +277,8 @@ function soft_histogram(
     particle_weights=nothing,
     normalize::Bool=true,
 )
-    sigma > 0 || throw(ArgumentError("sigma must be positive"))
-    n_observations, n_particles = size(samples)
-    n_bins = length(bin_centers)
-    n_bins > 1 || throw(ArgumentError("At least two bin centers are required."))
-
-    sample_grid = reshape(samples, n_observations, 1, n_particles)
-    bin_grid = reshape(bin_centers, 1, n_bins, 1)
-    log_assignments = -0.5 .* ((sample_grid .- bin_grid) ./ sigma).^2
-
-    # Stable softmax over bins for every observation and particle.
-    shifted = log_assignments .- maximum(log_assignments; dims=2)
-    unnormalized = exp.(shifted)
-    assignments = unnormalized ./ sum(unnormalized; dims=2)
+    _, n_particles = size(samples)
+    assignments = soft_assignments(samples, bin_centers; sigma=sigma)
 
     weighted_assignments = if isnothing(particle_weights)
         assignments
@@ -363,7 +346,7 @@ function predict_rwcm_cascade(
     )
 end
 
+include("two_rf_noninteracting.jl")
 include("grid_tomography.jl")
 
 end # module
-
