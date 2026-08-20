@@ -92,3 +92,4 @@ machine = SingleRFMachine(
     @test isapprox(gradient_ad, gradient_fd; rtol=5e-3, atol=1e-8)
 end
 
+include("slip_stacked_grid_tomography.jl")

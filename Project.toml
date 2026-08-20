@@ -1,12 +1,23 @@
 name = "LongitudinalTomography"
 uuid = "2d5b8ba1-c4e2-40ba-b2b7-d3adbc72f790"
-authors = ["Cristhian Gonzalez-Ortiz"]
 version = "0.1.0"
+authors = ["Cristhian Gonzalez-Ortiz"]
 
 [deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+Colors = "5ae59095-9a9b-59fe-a467-6f913c188581"
+FileIO = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
+ImageIO = "82e4d734-157c-48bb-816b-45c225c6df19"
 JacobiElliptic = "2a8b799e-c098-4961-872a-356c768d184c"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+
+[compat]
+Colors = "0.13.1"
+FileIO = "1.20.0"
+ImageIO = "0.6.9"
+JacobiElliptic = "0.3"
+Zygote = "0.6, 0.7"
+julia = "1.10"
 
 [extras]
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -14,8 +25,3 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
 test = ["Random", "Test"]
-
-[compat]
-JacobiElliptic = "0.3"
-Zygote = "0.6, 0.7"
-julia = "1.10"

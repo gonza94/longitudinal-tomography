@@ -23,6 +23,10 @@ export separatrix_grid, grid_weight_matrix, build_response_matrix
 export grid_weights_from_logits, profiles_from_response
 export profile_mse, grid_total_variation, grid_entropy_penalty
 export tomography_loss, tomography_diagnostics, reconstruct_grid
+export BucketSpec, SlipStackedColumnMetadata, SlipStackedGridResponse
+export transport_slip_stacked_grid, build_slip_stacked_response
+export direct_slip_stacked_profiles, uniform_bucket_weights
+export slip_stacked_grid_total_variation
 
 """
 Constant machine parameters for a stationary, single-harmonic RF bucket.
@@ -348,5 +352,6 @@ end
 
 include("two_rf_noninteracting.jl")
 include("grid_tomography.jl")
+include("slip_stacked_grid_tomography.jl")
 
 end # module
