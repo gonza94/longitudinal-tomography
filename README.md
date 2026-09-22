@@ -1,61 +1,38 @@
 # LongitudinalTomography.jl
 
-A Julia prototype for differentiable longitudinal phase-space tomography from
-turn-by-turn resistive-wall-current-monitor profiles.
+A Julia research prototype for longitudinal beam dynamics and phase-space
+tomography from turn-by-turn resistive-wall-current-monitor (RWCM) profiles,
+developed with the Fermilab Recycler and slip stacking in mind.
 
-This repository uses a hybrid layout:
+## Status
 
-- `src/LongitudinalTomography.jl` contains reusable physics and measurement
-  operators.
-- `notebooks/01_synthetic_forward_model.jl` is a VS Code-friendly experiment
-  with `# %%` cells.
-- `test/runtests.jl` verifies trapping, exact transport, charge conservation,
-  and an end-to-end automatic-differentiation gradient.
+- **Single RF:** Analytical transport of particles trapped inside a stationary
+  bucket, differentiable soft-histogram RWCM profiles, and grid tomography using
+  a precomputed response matrix. Grid reconstruction fits nonnegative cell
+  weights with optional total-variation and entropy penalties.
+- **Slip stacking:** A noninteracting two-RF model transports RF1 and RF2 bunches
+  in their own buckets and places them on one unwrapped RWCM time axis. The
+  combined grid response supports independent distributions for multiple
+  bunches and has a reconstruction path. Tests currently cover the combined
+  forward response, charge conservation, and its gradient.
 
-## Phase 1 scope
+This is a synthetic-data research tool, not a calibrated experimental
+reconstruction pipeline. The two RF families do not perturb one another; the
+model does not include coupled two-RF dynamics, capture or loss, or an RWCM
+transfer function. Analytical transport requires particles strictly inside a
+stationary separatrix.
 
-The current forward model assumes:
+## Get started
 
-- one stationary RF system;
-- constant Recycler parameters;
-- particles strictly inside the separatrix;
-- exact nonlinear libration transport using Jacobi elliptic functions;
-- a Gaussian differentiable soft histogram;
-- normalized profiles with no RWCM transfer function or noise yet.
-
-The synthetic example generates 4,096 particles, 51 profiles from turn 0 to
-250, and 75 time bins spanning one RF bucket.
-
-## Setup on macOS
-
-From a terminal in this directory:
+Use Julia 1.10 or newer from the repository root:
 
 ```bash
 julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
 ```
 
-Then open `notebooks/01_synthetic_forward_model.jl` in VS Code and execute the
-`# %%` cells with the Julia extension.
-
-The first CairoMakie compilation can take a little while. Subsequent runs are
-much faster.
-
-## Key API
-
-```julia
-theta0, P0 = trapped_coordinates(u, v)
-
-cascade = predict_rwcm_cascade(
-    theta0,
-    P0,
-    turns,
-    machine,
-    time_bin_centers_s;
-    sigma=soft_sigma_s,
-)
-```
-
-`cascade.profiles` has shape `(n_turns, n_time_bins)` and each row sums to one.
-The implementation avoids hard bin assignment and array mutation in the
-differentiated forward path.
-
+Load the local package with `julia --project=.` followed by
+`using LongitudinalTomography`. The reusable API is in [`src/`](src/); tests are
+in [`test/`](test/). For worked experiments, see the
+[single-RF forward example](julia_notebooks/singleRF/01_synthetic_forward_model.jl),
+[single-RF grid tomography notebooks](julia_notebooks/singleRF_grid_tomo/), and
+[noninteracting two-RF notebooks](julia_notebooks/dualRF_grid_tomo_no_interaction/).
