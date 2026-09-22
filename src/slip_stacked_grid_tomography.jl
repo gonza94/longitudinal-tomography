@@ -548,3 +548,333 @@ function slip_stacked_grid_total_variation(
         )
     end
 end
+
+
+function _slip_stacked_target_charge(
+    response::SlipStackedGridResponse,
+    target_profiles::AbstractMatrix,
+    total_charge,
+)
+    expected_size = (
+        length(response.turns),
+        length(response.time_bin_centers_s),
+    )
+    size(target_profiles) == expected_size || throw(DimensionMismatch(
+        "target_profiles must have size $expected_size.",
+    ))
+    all(isfinite, target_profiles) || throw(ArgumentError(
+        "target_profiles must contain only finite values.",
+    ))
+
+    effective_charge = if isnothing(total_charge)
+        # Each row is one measured profile. Averaging the row sums is more
+        # tolerant of small numerical charge errors than selecting one turn.
+        sum(target_profiles) / size(target_profiles, 1)
+    else
+        total_charge isa Real || throw(ArgumentError(
+            "total_charge must be a real number or nothing.",
+        ))
+        total_charge
+    end
+
+    isfinite(effective_charge) || throw(ArgumentError(
+        "The inferred total charge must be finite.",
+    ))
+    effective_charge > 0 || throw(ArgumentError(
+        "The inferred total charge must be positive.",
+    ))
+    return effective_charge
+end
+
+
+"""
+    slip_stacked_weights_from_logits(logits, response;
+                                     total_charge=1,
+                                     charge_mode=:learned)
+
+Convert unconstrained logits into nonnegative slip-stacked grid masses.
+
+With `charge_mode=:learned`, one global softmax is used, so tomography infers
+how the specified total charge is shared by the RF families and bucket blocks.
+This is the parameterization used by the original notebook demonstration.
+
+With `charge_mode=:fixed`, each bucket block has its own softmax and its total
+mass is fixed in proportion to `BucketSpec.charge_fraction`. The distribution
+within every block is still reconstructed.
+"""
+function slip_stacked_weights_from_logits(
+    logits::AbstractVector,
+    response::SlipStackedGridResponse;
+    total_charge::Real=1.0,
+    charge_mode::Symbol=:learned,
+)
+    n_unknowns = size(response.matrix, 2)
+    length(logits) == n_unknowns || throw(DimensionMismatch(
+        "logits must contain one value per slip-stacked response column.",
+    ))
+    isfinite(total_charge) || throw(ArgumentError(
+        "total_charge must be finite.",
+    ))
+    total_charge > 0 || throw(ArgumentError(
+        "total_charge must be positive.",
+    ))
+
+    if charge_mode === :learned
+        return total_charge .* grid_weights_from_logits(logits)
+    elseif charge_mode === :fixed
+        specified_charge = sum(
+            spec.charge_fraction for spec in response.bucket_specs
+        )
+        specified_charge > 0 || throw(ArgumentError(
+            "At least one BucketSpec charge_fraction must be positive " *
+            "when charge_mode=:fixed.",
+        ))
+        charge_scale = total_charge / specified_charge
+
+        # Construct blocks without mutation so this path remains compatible
+        # with Zygote reverse-mode differentiation.
+        weight_blocks = map(eachindex(response.bucket_specs)) do block_index
+            spec = response.bucket_specs[block_index]
+            block_range = response.block_ranges[block_index]
+            block_shape = grid_weights_from_logits(logits[block_range])
+            charge_scale .* spec.charge_fraction .* block_shape
+        end
+        return vcat(weight_blocks...)
+    end
+
+    throw(ArgumentError(
+        "charge_mode must be :learned or :fixed.",
+    ))
+end
+
+
+"""
+    tomography_loss(logits, response::SlipStackedGridResponse,
+                    target_profiles; train_turn_indices=nothing,
+                    lambda_tv=0, lambda_entropy=0,
+                    total_charge=nothing, charge_mode=:learned)
+
+Slip-stacked profile MSE plus optional total-variation and maximum-entropy
+regularization. The target charge is inferred from the mean profile integral
+unless `total_charge` is supplied explicitly.
+
+Regularization is evaluated on weights normalized to unit total charge, making
+`lambda_tv` and `lambda_entropy` independent of the absolute RWCM intensity
+scale.
+"""
+function tomography_loss(
+    logits::AbstractVector,
+    response::SlipStackedGridResponse,
+    target_profiles::AbstractMatrix;
+    train_turn_indices=nothing,
+    lambda_tv::Real=0.0,
+    lambda_entropy::Real=0.0,
+    tv_epsilon::Real=1e-12,
+    total_charge=nothing,
+    charge_mode::Symbol=:learned,
+)
+    lambda_tv >= 0 || throw(ArgumentError("lambda_tv must be nonnegative"))
+    lambda_entropy >= 0 || throw(ArgumentError(
+        "lambda_entropy must be nonnegative",
+    ))
+
+    effective_charge = _slip_stacked_target_charge(
+        response,
+        target_profiles,
+        total_charge,
+    )
+    weights = slip_stacked_weights_from_logits(
+        logits,
+        response;
+        total_charge=effective_charge,
+        charge_mode=charge_mode,
+    )
+    prediction = profiles_from_response(response, weights; normalize=false)
+    data_loss = profile_mse(
+        prediction,
+        target_profiles;
+        turn_indices=train_turn_indices,
+    )
+
+    normalized_weights = weights ./ effective_charge
+    tv_loss = slip_stacked_grid_total_variation(
+        normalized_weights,
+        response;
+        epsilon=tv_epsilon,
+    )
+    entropy_loss = grid_entropy_penalty(normalized_weights)
+
+    return data_loss + lambda_tv * tv_loss + lambda_entropy * entropy_loss
+end
+
+
+"""
+    tomography_diagnostics(logits, response::SlipStackedGridResponse,
+                           target_profiles; kwargs...)
+
+Return the slip-stacked loss components, reconstructed cell masses, predicted
+profiles, and inferred charge in each bucket block.
+"""
+function tomography_diagnostics(
+    logits::AbstractVector,
+    response::SlipStackedGridResponse,
+    target_profiles::AbstractMatrix;
+    train_turn_indices=nothing,
+    lambda_tv::Real=0.0,
+    lambda_entropy::Real=0.0,
+    tv_epsilon::Real=1e-12,
+    total_charge=nothing,
+    charge_mode::Symbol=:learned,
+)
+    lambda_tv >= 0 || throw(ArgumentError("lambda_tv must be nonnegative"))
+    lambda_entropy >= 0 || throw(ArgumentError(
+        "lambda_entropy must be nonnegative",
+    ))
+
+    effective_charge = _slip_stacked_target_charge(
+        response,
+        target_profiles,
+        total_charge,
+    )
+    weights = slip_stacked_weights_from_logits(
+        logits,
+        response;
+        total_charge=effective_charge,
+        charge_mode=charge_mode,
+    )
+    prediction = profiles_from_response(response, weights; normalize=false)
+    data_loss = profile_mse(
+        prediction,
+        target_profiles;
+        turn_indices=train_turn_indices,
+    )
+
+    normalized_weights = weights ./ effective_charge
+    tv_loss = slip_stacked_grid_total_variation(
+        normalized_weights,
+        response;
+        epsilon=tv_epsilon,
+    )
+    entropy_loss = grid_entropy_penalty(normalized_weights)
+    total_loss = data_loss + lambda_tv * tv_loss + lambda_entropy * entropy_loss
+    block_charges = [
+        sum(weights[block_range]) for block_range in response.block_ranges
+    ]
+
+    return (
+        total=total_loss,
+        data=data_loss,
+        total_variation=tv_loss,
+        entropy=entropy_loss,
+        weights=weights,
+        profiles=prediction,
+        total_charge=effective_charge,
+        block_charges=block_charges,
+        charge_mode=charge_mode,
+    )
+end
+
+
+"""
+    reconstruct_grid(response::SlipStackedGridResponse, target_profiles;
+                     iterations=500, learning_rate=0.05, ...)
+
+Reconstruct all RF-family and bucket-block cell masses using Adam applied to
+unconstrained logits. With the default `charge_mode=:learned`, the block charge
+sharing is reconstructed along with the phase-space shapes. Set
+`charge_mode=:fixed` to enforce the relative charges stored in the bucket
+specifications.
+"""
+function reconstruct_grid(
+    response::SlipStackedGridResponse,
+    target_profiles::AbstractMatrix;
+    iterations::Integer=500,
+    learning_rate::Real=0.05,
+    initial_logits=nothing,
+    train_turn_indices=nothing,
+    lambda_tv::Real=0.0,
+    lambda_entropy::Real=0.0,
+    tv_epsilon::Real=1e-12,
+    total_charge=nothing,
+    charge_mode::Symbol=:learned,
+    beta1::Real=0.9,
+    beta2::Real=0.999,
+    adam_epsilon::Real=1e-8,
+)
+    iterations >= 1 || throw(ArgumentError("iterations must be positive"))
+    learning_rate > 0 || throw(ArgumentError("learning_rate must be positive"))
+    0 <= beta1 < 1 || throw(ArgumentError("beta1 must lie in [0,1)"))
+    0 <= beta2 < 1 || throw(ArgumentError("beta2 must lie in [0,1)"))
+    adam_epsilon > 0 || throw(ArgumentError("adam_epsilon must be positive"))
+
+    effective_charge = _slip_stacked_target_charge(
+        response,
+        target_profiles,
+        total_charge,
+    )
+    n_unknowns = size(response.matrix, 2)
+    logits = if isnothing(initial_logits)
+        zeros(Float64, n_unknowns)
+    else
+        length(initial_logits) == n_unknowns || throw(DimensionMismatch(
+            "initial_logits must contain one value per slip-stacked " *
+            "response column.",
+        ))
+        Float64.(initial_logits)
+    end
+    all(isfinite, logits) || throw(ArgumentError(
+        "initial_logits must contain only finite values.",
+    ))
+
+    first_moment = zeros(Float64, n_unknowns)
+    second_moment = zeros(Float64, n_unknowns)
+    loss_history = Float64[]
+
+    objective = current_logits -> tomography_loss(
+        current_logits,
+        response,
+        target_profiles;
+        train_turn_indices=train_turn_indices,
+        lambda_tv=lambda_tv,
+        lambda_entropy=lambda_entropy,
+        tv_epsilon=tv_epsilon,
+        total_charge=effective_charge,
+        charge_mode=charge_mode,
+    )
+
+    for iteration in 1:Int(iterations)
+        loss_value, pullback = Zygote.pullback(objective, logits)
+        gradient = only(pullback(one(loss_value)))
+        isfinite(loss_value) || throw(ErrorException(
+            "Non-finite loss encountered at iteration $iteration.",
+        ))
+        all(isfinite, gradient) || throw(ErrorException(
+            "Non-finite gradient encountered at iteration $iteration.",
+        ))
+        push!(loss_history, Float64(loss_value))
+
+        first_moment = beta1 .* first_moment .+ (1 - beta1) .* gradient
+        second_moment = beta2 .* second_moment .+ (1 - beta2) .* gradient.^2
+        corrected_first = first_moment ./ (1 - beta1^iteration)
+        corrected_second = second_moment ./ (1 - beta2^iteration)
+        logits = logits .- learning_rate .* corrected_first ./
+            (sqrt.(corrected_second) .+ adam_epsilon)
+    end
+
+    diagnostics = tomography_diagnostics(
+        logits,
+        response,
+        target_profiles;
+        train_turn_indices=train_turn_indices,
+        lambda_tv=lambda_tv,
+        lambda_entropy=lambda_entropy,
+        tv_epsilon=tv_epsilon,
+        total_charge=effective_charge,
+        charge_mode=charge_mode,
+    )
+    return merge(diagnostics, (
+        logits=logits,
+        loss_history=loss_history,
+        train_turn_indices=train_turn_indices,
+    ))
+end

@@ -26,7 +26,7 @@ export tomography_loss, tomography_diagnostics, reconstruct_grid
 export BucketSpec, SlipStackedColumnMetadata, SlipStackedGridResponse
 export transport_slip_stacked_grid, build_slip_stacked_response
 export direct_slip_stacked_profiles, uniform_bucket_weights
-export slip_stacked_grid_total_variation
+export slip_stacked_grid_total_variation, slip_stacked_weights_from_logits
 
 """
 Constant machine parameters for a stationary, single-harmonic RF bucket.

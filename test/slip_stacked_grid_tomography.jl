@@ -54,6 +54,7 @@
     n_cells = length(grid)
     n_rows = length(turns) * length(time_bin_centers_s)
 
+    @test :slip_stacked_weights_from_logits in names(LongitudinalTomography)
     @test size(response.matrix) == (n_rows, 2n_cells)
     @test response.block_ranges == [1:n_cells, (n_cells + 1):(2n_cells)]
     @test length(response.column_metadata) == 2n_cells
@@ -71,6 +72,13 @@
     column_charge_by_turn =
         dropdims(sum(response_tensor; dims=2); dims=2)
     @test maximum(abs.(column_charge_by_turn .- 1)) < 2e-14
+
+    smoke_weights = slip_stacked_weights_from_logits(
+        zeros(size(response.matrix, 2)),
+        response,
+    )
+    @test length(smoke_weights) == size(response.matrix, 2)
+    @test sum(smoke_weights) ≈ 1.0
 
     rf1_bucket0 = transport_slip_stacked_grid(
         grid,
